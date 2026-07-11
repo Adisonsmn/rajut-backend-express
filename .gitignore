@@ -1,0 +1,25 @@
+# Node
+node_modules/
+dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Bun
+bun.lockb
+
+# Prisma
+prisma/migrations/dev.db
+prisma/migrations/dev.db-journal
+
+/src/generated/prisma
