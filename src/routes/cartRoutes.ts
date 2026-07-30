@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import { asyncHandler } from '../lib/asyncHandler.js';
 import * as cartController from '../controllers/cartController.js';
+import { protect } from '../middlewares/authMiddleware.js';
 
 const router = Router();
 
-// TODO: Add auth middleware for all cart routes
+// Wajib login untuk semua rute cart
+router.use(protect);
 
 router.get('/', asyncHandler(cartController.getCart));
 

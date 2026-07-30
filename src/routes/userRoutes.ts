@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import { asyncHandler } from '../lib/asyncHandler.js';
 import * as userController from '../controllers/userController.js';
+import { protect } from '../middlewares/authMiddleware.js';
 
 const router = Router();
 
-// TODO: Add auth middleware for all user routes
+// Wajib login untuk semua rute user
+router.use(protect);
 
 router.get('/profile', asyncHandler(userController.getProfile));
 router.put('/profile', asyncHandler(userController.updateProfile));
