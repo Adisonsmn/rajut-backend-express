@@ -2,39 +2,16 @@ import { Request, Response, NextFunction } from 'express';
 import prisma from '../lib/prisma.js';
 import { AppError } from '../lib/AppError.js';
 
-export const getProfile = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const user = await prisma.user.findUnique({
-      where: { userId: req.user!.userId },
-      select: { userId: true, email: true, fullName: true, phone: true, role: true, createdAt: true }
-    });
-    res.status(200).json({ status: 'success', data: { user } });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const updateProfile = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { fullName, phone } = req.body;
-    const user = await prisma.user.update({
-      where: { userId: req.user!.userId },
-      data: { fullName, phone },
-      select: { userId: true, email: true, fullName: true, phone: true, role: true, createdAt: true }
-    });
-    res.status(200).json({ status: 'success', data: { user } });
-  } catch (error) {
-    next(error);
-  }
-};
-
 export const getAddresses = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const addresses = await prisma.userAddress.findMany({
-      where: { userId: req.user!.userId },
-      orderBy: { isDefault: 'desc' }
+    const addresses = await prisma.address.findMany({
+      where: { userId: BigInt(req.user!.id) },
+      orderBy: { isDefault: 'desc' },
     });
-    res.status(200).json({ status: 'success', results: addresses.length, data: { addresses } });
+
+    res.status(200).json({
+      data: addresses.map((a) => ({ ...a, id: a.id.toString(), userId: a.userId.toString() })),
+    });
   } catch (error) {
     next(error);
   }
@@ -42,20 +19,45 @@ export const getAddresses = async (req: Request, res: Response, next: NextFuncti
 
 export const createAddress = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { receiverName, phone, address, city, province, postalCode } = req.body;
-    
-    // Cek apakah ini alamat pertama
-    const addressCount = await prisma.userAddress.count({ where: { userId: req.user!.userId } });
-    const isDefault = addressCount === 0;
+    const { label, recipient_name, phone, province, city, district, postal_code, address_line, notes, latitude, longitude, is_default } = req.body;
 
-    const newAddress = await prisma.userAddress.create({
+    if (!recipient_name || !phone || !province || !city || !district || !postal_code || !address_line) {
+      return next(new AppError('Please provide all required address fields', 400));
+    }
+
+    const userId = BigInt(req.user!.id);
+
+    const addressCount = await prisma.address.count({ where: { userId } });
+    const makeDefault = addressCount === 0 || is_default === true;
+
+    if (makeDefault) {
+      await prisma.address.updateMany({
+        where: { userId, isDefault: true },
+        data: { isDefault: false },
+      });
+    }
+
+    const newAddress = await prisma.address.create({
       data: {
-        userId: req.user!.userId,
-        receiverName, phone, address, city, province, postalCode,
-        isDefault
-      }
+        userId,
+        label,
+        recipientName: recipient_name,
+        phone,
+        province,
+        city,
+        district,
+        postalCode: postal_code,
+        addressLine: address_line,
+        notes,
+        latitude: latitude ? parseFloat(latitude) : null,
+        longitude: longitude ? parseFloat(longitude) : null,
+        isDefault: makeDefault,
+      },
     });
-    res.status(201).json({ status: 'success', data: { address: newAddress } });
+
+    res.status(201).json({
+      data: { ...newAddress, id: newAddress.id.toString(), userId: newAddress.userId.toString() },
+    });
   } catch (error) {
     next(error);
   }
@@ -63,27 +65,41 @@ export const createAddress = async (req: Request, res: Response, next: NextFunct
 
 export const updateAddress = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { receiverName, phone, address, city, province, postalCode, isDefault } = req.body;
-    const addressId = parseInt(req.params.addressId as string);
+    const addressId = BigInt(String(req.params.id));
+    const userId = BigInt(req.user!.id);
+    const { label, recipient_name, phone, province, city, district, postal_code, address_line, notes, latitude, longitude, is_default } = req.body;
 
-    // Cek kepemilikan alamat
-    const existing = await prisma.userAddress.findFirst({ where: { addressId, userId: req.user!.userId } });
+    const existing = await prisma.address.findFirst({ where: { id: addressId, userId } });
     if (!existing) return next(new AppError('Address not found', 404));
 
-    // Jika diset default, jadikan yang lain false
-    if (isDefault) {
-      await prisma.userAddress.updateMany({
-        where: { userId: req.user!.userId, isDefault: true },
-        data: { isDefault: false }
+    if (is_default) {
+      await prisma.address.updateMany({
+        where: { userId, isDefault: true },
+        data: { isDefault: false },
       });
     }
 
-    const updatedAddress = await prisma.userAddress.update({
-      where: { addressId },
-      data: { receiverName, phone, address, city, province, postalCode, isDefault }
+    const updated = await prisma.address.update({
+      where: { id: addressId },
+      data: {
+        label,
+        recipientName: recipient_name,
+        phone,
+        province,
+        city,
+        district,
+        postalCode: postal_code,
+        addressLine: address_line,
+        notes,
+        latitude: latitude !== undefined ? parseFloat(latitude) : undefined,
+        longitude: longitude !== undefined ? parseFloat(longitude) : undefined,
+        isDefault: is_default,
+      },
     });
 
-    res.status(200).json({ status: 'success', data: { address: updatedAddress } });
+    res.status(200).json({
+      data: { ...updated, id: updated.id.toString(), userId: updated.userId.toString() },
+    });
   } catch (error) {
     next(error);
   }
@@ -91,13 +107,29 @@ export const updateAddress = async (req: Request, res: Response, next: NextFunct
 
 export const deleteAddress = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const addressId = parseInt(req.params.addressId as string);
-    
-    const existing = await prisma.userAddress.findFirst({ where: { addressId, userId: req.user!.userId } });
+    const addressId = BigInt(String(req.params.id));
+    const userId = BigInt(req.user!.id);
+
+    const existing = await prisma.address.findFirst({ where: { id: addressId, userId } });
     if (!existing) return next(new AppError('Address not found', 404));
 
-    await prisma.userAddress.delete({ where: { addressId } });
-    res.status(204).json({ status: 'success', data: null });
+    await prisma.address.delete({ where: { id: addressId } });
+
+    if (existing.isDefault) {
+      const first = await prisma.address.findFirst({ where: { userId }, orderBy: { id: 'asc' } });
+      if (first) {
+        await prisma.address.update({ where: { id: first.id }, data: { isDefault: true } });
+      }
+    }
+
+    const addresses = await prisma.address.findMany({
+      where: { userId },
+      orderBy: { isDefault: 'desc' },
+    });
+
+    res.status(200).json({
+      data: addresses.map((a) => ({ ...a, id: a.id.toString(), userId: a.userId.toString() })),
+    });
   } catch (error) {
     next(error);
   }
