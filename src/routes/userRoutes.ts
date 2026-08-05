@@ -1,17 +1,15 @@
 import { Router } from 'express';
 import { asyncHandler } from '../lib/asyncHandler.js';
 import * as userController from '../controllers/userController.js';
+import { protect } from '../middlewares/authMiddleware.js';
 
 const router = Router();
 
-// TODO: Add auth middleware for all user routes
+router.use(protect);
 
-router.get('/profile', asyncHandler(userController.getProfile));
-router.put('/profile', asyncHandler(userController.updateProfile));
-
-router.get('/addresses', asyncHandler(userController.getAddresses));
-router.post('/addresses', asyncHandler(userController.createAddress));
-router.put('/addresses/:addressId', asyncHandler(userController.updateAddress));
-router.delete('/addresses/:addressId', asyncHandler(userController.deleteAddress));
+router.get('/', asyncHandler(userController.getAddresses));
+router.post('/', asyncHandler(userController.createAddress));
+router.put('/:id', asyncHandler(userController.updateAddress));
+router.delete('/:id', asyncHandler(userController.deleteAddress));
 
 export default router;
