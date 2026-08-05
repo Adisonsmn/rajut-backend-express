@@ -3,6 +3,8 @@ import { asyncHandler } from '../lib/asyncHandler.js';
 import { healthCheck } from '../controllers/healthController.js';
 
 import authRoutes from './authRoutes.js';
+import userRoutes from './userRoutes.js';
+import productRoutes from './productRoutes.js';
 import addressRoutes from './userRoutes.js';
 import cartRoutes from './cartRoutes.js';
 import storefrontRoutes from './storefrontRoutes.js';
@@ -24,6 +26,8 @@ router.post('/logout', protect, asyncHandler(authController.logout));
 router.put('/account', protect, asyncHandler(authController.updateAccount));
 
 router.use('/auth', authRoutes);
+router.use('/users', userRoutes);
+router.use('/products', productRoutes);
 router.use('/', storefrontRoutes);
 router.use('/addresses', addressRoutes);
 router.use('/cart', cartRoutes);
