@@ -24,7 +24,10 @@ export const protect = (req: Request, _res: Response, next: NextFunction) => {
       throw new AppError('You are not logged in. Please log in to get access.', 401);
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as { userId: string; role: string };
+    const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as {
+      userId: string;
+      role: string;
+    };
 
     req.user = { id: decoded.userId, role: decoded.role };
     next();

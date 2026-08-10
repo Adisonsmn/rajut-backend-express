@@ -13,16 +13,34 @@ const signToken = (userId: string, role: string) => {
   );
 };
 
+const formatUser = (user: any) => {
+  const role = (user.role || 'USER').toLowerCase() === 'admin' ? 'admin' : 'customer';
+  return {
+    id: user.userId,
+    userId: user.userId,
+    name: user.fullName || user.name || '',
+    fullName: user.fullName || user.name || '',
+    email: user.email,
+    phone: user.phone || '',
+    role,
+    avatarUrl: user.avatarUrl || null,
+  };
+};
+
 export const register = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { fullName, email, password, passwordConfirmation, phone } = req.body;
+    const name = req.body.name || req.body.fullName;
+    const email = req.body.email;
+    const password = req.body.password;
+    const passwordConfirm = req.body.password_confirmation || req.body.passwordConfirmation;
+    const phone = req.body.phone;
 
-    if (!fullName || !email || !password || !passwordConfirmation || !phone) {
-      return next(new AppError('Full name, email, and password are required', 400));
+    if (!name || !email || !password || !passwordConfirm) {
+      return next(new AppError('Nama, email, dan kata sandi wajib diisi', 400));
     }
     
-    if (password !== passwordConfirmation) {
-      return next(new AppError('Password and password confirmation do not match', 400));
+    if (password !== passwordConfirm) {
+      return next(new AppError('Kata sandi dan konfirmasi kata sandi tidak cocok', 400));
     }
     
     const existingUser = await prisma.user.findUnique({
@@ -30,14 +48,14 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
     });
 
     if (existingUser) {
-      return next(new AppError('Email already in use', 400));
+      return next(new AppError('Email sudah terdaftar', 400));
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
 
     const newUser = await prisma.user.create({
       data: {
-        fullName,
+        fullName: name,
         email,
         passwordHash,
         phone,
@@ -45,16 +63,13 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
     });
 
     const token = signToken(newUser.userId, newUser.role);
+    const formattedUser = formatUser(newUser);
 
     res.status(201).json({
       success: true,
       token,
-      data: {
-        userId: newUser.userId,
-        fullName: newUser.fullName,
-        email: newUser.email,
-        role: newUser.role,
-      },
+      user: formattedUser,
+      data: formattedUser,
     });
   } catch (error) {
     next(error);
@@ -66,7 +81,7 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return next(new AppError('Please provide email and password', 400));
+      return next(new AppError('Silakan masukkan email dan kata sandi', 400));
     }
 
     const user = await prisma.user.findUnique({
@@ -74,24 +89,28 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
     });
 
     if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
-      return next(new AppError('Incorrect email or password', 401));
+      return next(new AppError('Email atau kata sandi salah', 401));
     }
 
     const token = signToken(user.userId, user.role);
+    const formattedUser = formatUser(user);
 
     res.status(200).json({
       success: true,
       token,
-      data: {
-        userId: user.userId,
-        fullName: user.fullName,
-        email: user.email,
-        role: user.role,
-      },
+      user: formattedUser,
+      data: formattedUser,
     });
   } catch (error) {
     next(error);
   }
+};
+
+export const logout = async (_req: Request, res: Response) => {
+  res.status(200).json({
+    success: true,
+    message: 'Berhasil keluar',
+  });
 };
 
 export const getMe = async (req: Request, res: Response, next: NextFunction) => {
@@ -100,24 +119,18 @@ export const getMe = async (req: Request, res: Response, next: NextFunction) => 
 
     const user = await prisma.user.findUnique({
       where: { userId },
-      select: {
-        userId: true,
-        fullName: true,
-        email: true,
-        phone: true,
-        role: true,
-        avatarUrl: true,
-        createdAt: true,
-      }
     });
 
     if (!user) {
-      return next(new AppError('User not found', 404));
+      return next(new AppError('Pengguna tidak ditemukan', 404));
     }
+
+    const formattedUser = formatUser(user);
 
     res.status(200).json({
       success: true,
-      data: user,
+      user: formattedUser,
+      data: formattedUser,
     });
   } catch (error) {
     next(error);
@@ -127,7 +140,8 @@ export const getMe = async (req: Request, res: Response, next: NextFunction) => 
 export const updateAccount = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    const { fullName, phone, password } = req.body;
+    const name = req.body.name || req.body.fullName;
+    const { phone, password } = req.body;
     
     let avatarUrl = undefined;
 
@@ -140,7 +154,7 @@ export const updateAccount = async (req: Request, res: Response, next: NextFunct
     }
 
     const updateData: any = {};
-    if (fullName) updateData.fullName = fullName;
+    if (name) updateData.fullName = name;
     if (phone !== undefined) updateData.phone = phone;
     if (avatarUrl) updateData.avatarUrl = avatarUrl;
     
@@ -151,20 +165,14 @@ export const updateAccount = async (req: Request, res: Response, next: NextFunct
     const updatedUser = await prisma.user.update({
       where: { userId },
       data: updateData,
-      select: {
-        userId: true,
-        fullName: true,
-        email: true,
-        phone: true,
-        role: true,
-        avatarUrl: true,
-        createdAt: true,
-      }
     });
+
+    const formattedUser = formatUser(updatedUser);
 
     res.status(200).json({
       success: true,
-      data: updatedUser,
+      user: formattedUser,
+      data: formattedUser,
     });
   } catch (error) {
     next(error);

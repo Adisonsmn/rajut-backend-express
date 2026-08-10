@@ -9,7 +9,9 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 *
 
 router.post('/register', asyncHandler(authController.register));
 router.post('/login', asyncHandler(authController.login));
+router.post('/logout', asyncHandler(authController.logout));
 router.get('/me', protect, asyncHandler(authController.getMe));
 router.put('/me', protect, upload.single('avatar'), asyncHandler(authController.updateAccount));
+router.put('/account', protect, upload.single('avatar'), asyncHandler(authController.updateAccount));
 
 export default router;

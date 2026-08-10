@@ -3,415 +3,437 @@ import prisma from '../lib/prisma.js';
 import { uploadFileToSupabase, deleteFilesFromSupabase } from '../lib/uploadSupabase.js';
 import crypto from 'crypto';
 
+export const formatProduct = (p: any) => {
+  const stock = Array.isArray(p.variants) && p.variants.length > 0
+    ? p.variants.reduce((sum: number, v: any) => sum + (v.stock || 0), 0)
+    : 0;
+  
+  const images = (p.imageUrls || []).map((url: string, index: number) => ({
+    id: url,
+    url,
+    path: url,
+    is_primary: index === 0
+  }));
+
+  const primaryImage = images[0]?.url || '';
+
+  return {
+    id: p.productId,
+    productId: p.productId,
+    name: p.name,
+    slug: p.name ? p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') : p.productId,
+    price: p.basePrice ? Number(p.basePrice) : 0,
+    basePrice: p.basePrice ? Number(p.basePrice) : 0,
+    stock,
+    category: p.category || 'Umum',
+    description: p.description || '',
+    shortDescription: p.description || '',
+    fullDescription: p.description || '',
+    image: primaryImage,
+    images,
+    imageUrls: p.imageUrls || [],
+    featured: true,
+    is_featured: true,
+    active: p.isActive !== false,
+    is_active: p.isActive !== false,
+    isActive: p.isActive !== false,
+    availability_type: 'ready_stock',
+    preorder_duration: null,
+    variants: p.variants || [],
+  };
+};
+
 export const getAllProducts = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-        const page = parseInt(req.query.page as string) || 1;
-        const limit = parseInt(req.query.limit as string) || 10;
-        const search = req.query.search as string;
-        const category = req.query.category as string;
-        const minPrice = req.query.minPrice ? parseFloat(req.query.minPrice as string) : undefined;
-        const maxPrice = req.query.maxPrice ? parseFloat(req.query.maxPrice as string) : undefined;
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const search = req.query.search as string;
+    const category = req.query.category as string;
+    const minPrice = req.query.minPrice ? parseFloat(req.query.minPrice as string) : undefined;
+    const maxPrice = req.query.maxPrice ? parseFloat(req.query.maxPrice as string) : undefined;
 
-        const skip = (page - 1) * limit;
+    const skip = (page - 1) * limit;
 
-        const whereClause: any = {
-            isActive: true
-        };
+    const whereClause: any = {
+      isActive: true
+    };
 
-        if (search) {
-            whereClause.OR = [
-                { name: { contains: search, mode: 'insensitive' } },
-                { description: { contains: search, mode: 'insensitive' } }
-            ];
-        }
-
-        if (category) {
-            whereClause.category = { equals: category, mode: 'insensitive' };
-        }
-
-        if (minPrice !== undefined || maxPrice !== undefined) {
-            whereClause.basePrice = {};
-            if (minPrice !== undefined) whereClause.basePrice.gte = minPrice;
-            if (maxPrice !== undefined) whereClause.basePrice.lte = maxPrice;
-        }
-
-        const totalProducts = await prisma.product.count({ where: whereClause });
-
-        const products = await prisma.product.findMany({
-            where: whereClause,
-            include: {
-                variants: true
-            },
-            skip,
-            take: limit,
-            orderBy: {
-                createdAt: 'desc'
-            }
-        });
-        
-        res.status(200).json({
-            success: true,
-            pagination: {
-                total: totalProducts,
-                page,
-                limit,
-                totalPages: Math.ceil(totalProducts / limit)
-            },
-            data: products
-        });
-    } catch (error) {
-        next(error);
+    if (search) {
+      whereClause.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } }
+      ];
     }
-}
+
+    if (category) {
+      whereClause.category = { contains: category, mode: 'insensitive' };
+    }
+
+    if (minPrice !== undefined || maxPrice !== undefined) {
+      whereClause.basePrice = {};
+      if (minPrice !== undefined) whereClause.basePrice.gte = minPrice;
+      if (maxPrice !== undefined) whereClause.basePrice.lte = maxPrice;
+    }
+
+    const totalProducts = await prisma.product.count({ where: whereClause });
+
+    const products = await prisma.product.findMany({
+      where: whereClause,
+      include: {
+        variants: true
+      },
+      skip,
+      take: limit,
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    const formattedProducts = products.map(formatProduct);
+    
+    res.status(200).json({
+      success: true,
+      pagination: {
+        total: totalProducts,
+        page,
+        limit,
+        totalPages: Math.ceil(totalProducts / limit)
+      },
+      data: formattedProducts
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
 export const getProductById = async (req: Request, res: Response, next: NextFunction) => {
-    const { id } = req.params;
+  const productId = req.params['id'] as string;
 
-    if (!id) {
-        res.status(404).json({
-            success: false,
-            error: "Product not found"
-        });
+  if (!productId) {
+    res.status(404).json({
+      success: false,
+      error: "Product not found"
+    });
+    return;
+  }
+  
+  try {
+    const requestedProduct = await prisma.product.findUnique({
+      where: {
+        productId,
+      },
+      include: {
+        variants: true
+      }
+    });
 
-        return;
+    if (!requestedProduct) {
+      res.status(404).json({
+        success: false,
+        error: "Product not found"
+      });
+      return;
     }
-    
-    try {
-        const requestedProduct = await prisma.product.findUnique({
-            where: {
-                productId: id as string,
-                isActive: true
-            },
-            include: {
-                variants: true
-            }
-        });
 
-        if (!requestedProduct) {
-            res.status(404).json({
-                success: false,
-                error: "Product not found"
-            });
-            return;
-        }
-
-        res.status(200).json({
-            success: true,
-            data: requestedProduct
-        }); 
-    } catch (error) {
-        next(error);
-    }
-}
+    res.status(200).json({
+      success: true,
+      data: formatProduct(requestedProduct)
+    }); 
+  } catch (error) {
+    next(error);
+  }
+};
 
 export const addProduct = async (req: Request, res: Response, next: NextFunction) => {
-    let { name, description, basePrice, variants, category } = req.body;
-    let imageUrls: string[] = req.body.imageUrls ? (Array.isArray(req.body.imageUrls) ? req.body.imageUrls : [req.body.imageUrls]) : [];
-    
-    // VALIDATE FIRST
-    if (!name || !description || !basePrice || !variants) {
-        res.status(400).json({
-            success: false,
-            error: "Format required not fulfilled"
-        });
-        return;
-    }
-
-    let parsedVariants = variants;
-    if (typeof variants === 'string') {
-        try {
-            parsedVariants = JSON.parse(variants);
-            if (typeof parsedVariants === 'string') {
-                parsedVariants = JSON.parse(parsedVariants);
-            }
-        } catch (e) {
-            res.status(400).json({
-                success: false,
-                error: "Invalid JSON format for variants"
-            });
-            return;
-        }
-    }
-
-    const productId = crypto.randomUUID();
-
-    if (req.files && Array.isArray(req.files) && req.files.length > 0) {
-        try {
-            const uploadPromises = req.files.map(file => uploadFileToSupabase(file, 'product', productId));
-            const uploadedUrls = await Promise.all(uploadPromises);
-            imageUrls = [...imageUrls, ...uploadedUrls];
-        } catch (error) {
-            return next(error);
-        }
-    }
-
-    if (imageUrls.length === 0) {
-        res.status(400).json({
-            success: false,
-            error: "Format required not fulfilled: At least 1 image is required"
-        });
-        return;
-    }
-
+  const { name } = req.body;
+  const description = req.body.description || req.body.fullDescription || req.body.short_description || '';
+  const priceVal = req.body.price ?? req.body.basePrice;
+  const stockVal = req.body.stock !== undefined ? parseInt(req.body.stock) : 0;
+  
+  let categoryVal = req.body.category || req.body.category_name;
+  if (!categoryVal && req.body.category_id) {
     try {
-        const newProduct = await prisma.product.create({
-            data: {
-                productId,
-                name,
-                description,
-                category,
-                basePrice: parseFloat(basePrice),
-                imageUrls,
-                variants: {
-                    create: parsedVariants
-                }
-            },
-            include: {
-                variants: true
-            }
-        });
+      const catObj = await prisma.category.findUnique({
+        where: { categoryId: String(req.body.category_id) }
+      });
+      if (catObj) categoryVal = catObj.name;
+    } catch {}
+  }
+  if (!categoryVal) categoryVal = 'Umum';
 
-        res.status(201).json({
-            success: true,
-            data: newProduct
-        });
+  if (!name || priceVal === undefined) {
+    res.status(400).json({
+      success: false,
+      error: "Nama dan harga produk wajib diisi"
+    });
+    return;
+  }
+
+  let imageUrls: string[] = req.body.imageUrls ? (Array.isArray(req.body.imageUrls) ? req.body.imageUrls : [req.body.imageUrls]) : [];
+
+  const productId = crypto.randomUUID();
+
+  if (req.files && Array.isArray(req.files) && req.files.length > 0) {
+    try {
+      const uploadPromises = req.files.map(file => uploadFileToSupabase(file, 'product', productId));
+      const uploadedUrls = await Promise.all(uploadPromises);
+      imageUrls = [...imageUrls, ...uploadedUrls];
     } catch (error) {
-        await deleteFilesFromSupabase(imageUrls, 'product');
-        next(error);
+      return next(error);
     }
-}
+  }
+
+  let parsedVariants = req.body.variants;
+  if (typeof parsedVariants === 'string') {
+    try {
+      parsedVariants = JSON.parse(parsedVariants);
+    } catch {
+      parsedVariants = null;
+    }
+  }
+
+  if (!parsedVariants || !Array.isArray(parsedVariants) || parsedVariants.length === 0) {
+    parsedVariants = [
+      { color: 'Standard', size: 'All Size', stock: stockVal }
+    ];
+  }
+
+  try {
+    const newProduct = await prisma.product.create({
+      data: {
+        productId,
+        name,
+        description,
+        category: categoryVal,
+        basePrice: parseFloat(priceVal),
+        imageUrls,
+        isActive: req.body.is_active !== false && req.body.active !== false,
+        variants: {
+          create: parsedVariants.map((v: any) => ({
+            color: v.color || 'Standard',
+            size: v.size || 'All Size',
+            stock: v.stock !== undefined ? parseInt(v.stock) : stockVal,
+          }))
+        }
+      },
+      include: {
+        variants: true
+      }
+    });
+
+    const formatted = formatProduct(newProduct);
+
+    res.status(201).json({
+      success: true,
+      data: formatted
+    });
+  } catch (error) {
+    if (imageUrls.length > 0) {
+      await deleteFilesFromSupabase(imageUrls, 'product').catch(() => {});
+    }
+    next(error);
+  }
+};
 
 export const updateProduct = async (req: Request, res: Response, next: NextFunction) => {
-    const { id } = req.params;
-    let { name, description, basePrice, variants, category, isActive } = req.body;
-    let keptImages: string[] = req.body.keptImages ? (Array.isArray(req.body.keptImages) ? req.body.keptImages : [req.body.keptImages]) : [];
-
-    // VALIDATE FIRST
-    if (!id || !name || !description || !basePrice) {
-        res.status(400).json({
-            success: false,
-            error: "Format required not fulfilled"
-        });
-        return;
-    }
-
-    let parsedVariants = variants;
-    if (typeof variants === 'string') {
-        try {
-            parsedVariants = JSON.parse(variants);
-            if (typeof parsedVariants === 'string') {
-                parsedVariants = JSON.parse(parsedVariants);
-            }
-        } catch (e) {
-            res.status(400).json({
-                success: false,
-                error: "Invalid JSON format for variants"
-            });
-            return;
-        }
-    }
-
-    let parsedIsActive: boolean | undefined = undefined;
-    if (isActive !== undefined) {
-        parsedIsActive = isActive === 'true' || isActive === true;
-    }
-
-    let existingProduct;
+  const productId = req.params['id'] as string;
+  const { name } = req.body;
+  const description = req.body.description || req.body.fullDescription || req.body.short_description || '';
+  const priceVal = req.body.price ?? req.body.basePrice;
+  const stockVal = req.body.stock !== undefined ? parseInt(req.body.stock) : undefined;
+  
+  let categoryVal = req.body.category || req.body.category_name;
+  if (!categoryVal && req.body.category_id) {
     try {
-        existingProduct = await prisma.product.findUnique({ where: { productId: id as string } });
-        if (!existingProduct) {
-            res.status(404).json({ success: false, error: "Product not found" });
-            return;
-        }
+      const catObj = await prisma.category.findUnique({
+        where: { categoryId: String(req.body.category_id) }
+      });
+      if (catObj) categoryVal = catObj.name;
+    } catch {}
+  }
+
+  const isActive = req.body.is_active !== undefined ? req.body.is_active : req.body.active;
+
+  let keptImages: string[] = req.body.keptImages ? (Array.isArray(req.body.keptImages) ? req.body.keptImages : [req.body.keptImages]) : [];
+
+  if (!productId) {
+    res.status(400).json({
+      success: false,
+      error: "ID produk tidak valid"
+    });
+    return;
+  }
+
+  let existingProduct;
+  try {
+    existingProduct = await prisma.product.findUnique({ where: { productId } });
+    if (!existingProduct) {
+      res.status(404).json({ success: false, error: "Produk tidak ditemukan" });
+      return;
+    }
+  } catch (error) {
+    return next(error);
+  }
+
+  let imageUrls = keptImages.length > 0 ? [...keptImages] : existingProduct.imageUrls;
+
+  if (req.files && Array.isArray(req.files) && req.files.length > 0) {
+    try {
+      const uploadPromises = req.files.map(file => uploadFileToSupabase(file, 'product', productId));
+      const uploadedUrls = await Promise.all(uploadPromises);
+      imageUrls = [...imageUrls, ...uploadedUrls];
     } catch (error) {
-        return next(error);
+      return next(error);
+    }
+  }
+
+  try {        
+    const updateData: any = {
+      imageUrls,
+    };
+
+    if (name) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
+    if (categoryVal !== undefined) updateData.category = categoryVal;
+    if (priceVal !== undefined) updateData.basePrice = parseFloat(priceVal);
+    if (isActive !== undefined) updateData.isActive = isActive === true || isActive === 'true';
+
+    const updatedProduct = await prisma.product.update({
+      where: {
+        productId
+      },
+      data: updateData,
+      include: {
+        variants: true
+      }
+    });
+
+    const firstVariant = updatedProduct.variants && updatedProduct.variants[0];
+    if (stockVal !== undefined && firstVariant) {
+      await prisma.productVariant.update({
+        where: { variantId: firstVariant.variantId },
+        data: { stock: stockVal }
+      });
     }
 
-    let imageUrls = [...keptImages];
+    const reloaded = await prisma.product.findUnique({
+      where: { productId },
+      include: { variants: true }
+    });
 
-    if (req.files && Array.isArray(req.files) && req.files.length > 0) {
-        try {
-            const uploadPromises = req.files.map(file => uploadFileToSupabase(file, 'product', id as string));
-            const uploadedUrls = await Promise.all(uploadPromises);
-            imageUrls = [...imageUrls, ...uploadedUrls];
-        } catch (error) {
-            return next(error);
-        }
-    }
+    const formatted = formatProduct(reloaded || updatedProduct);
 
-    if (imageUrls.length === 0) {
-        res.status(400).json({
-            success: false,
-            error: "Format required not fulfilled: At least 1 image is required"
-        });
-        return;
-    }
-
-    try {        
-        const updateData: any = {
-            name,
-            description,
-            category,
-            basePrice: parseFloat(basePrice),
-            imageUrls,
-        };
-
-        if (parsedIsActive !== undefined) {
-            updateData.isActive = parsedIsActive;
-        }
-
-        if (parsedVariants && Array.isArray(parsedVariants)) {
-            updateData.variants = {
-                upsert: parsedVariants.map((v: any) => ({
-                    where: { variantId: v.variantId || '00000000-0000-0000-0000-000000000000' },
-                    update: { color: v.color, size: v.size, stock: v.stock },
-                    create: { color: v.color, size: v.size, stock: v.stock }
-                }))
-            };
-        }
-
-        const updatedProduct = await prisma.product.update({
-            where: {
-                productId: id as string
-            },
-            data: updateData,
-            include: {
-                variants: true
-            }
-        });
-
-        // Cleanup old images that are not in imageUrls anymore
-        const imagesToDelete = existingProduct.imageUrls.filter(oldUrl => !imageUrls.includes(oldUrl));
-        if (imagesToDelete.length > 0) {
-            await deleteFilesFromSupabase(imagesToDelete, 'product');
-        }
-
-        res.status(200).json({
-            success: true,
-            data: updatedProduct
-        });
-    } catch (error) {
-        next(error);
-    }
-}
+    res.status(200).json({
+      success: true,
+      data: formatted
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
 export const deleteProduct = async (req: Request, res: Response, next: NextFunction) => {
-    const { id } = req.params;
+  const productId = req.params['id'] as string;
 
-    if (!id) {
-        res.status(404).json({
-            success: false,
-            error: "Product not found"
-        });
-        return;
+  if (!productId) {
+    res.status(404).json({
+      success: false,
+      error: "Produk tidak ditemukan"
+    });
+    return;
+  }
+
+  try {
+    const existingProduct = await prisma.product.findUnique({ where: { productId } });
+    if (!existingProduct) {
+      res.status(404).json({ success: false, error: "Produk tidak ditemukan" });
+      return;
     }
 
-    try {
-        const existingProduct = await prisma.product.findUnique({ where: { productId: id as string } });
-        if (!existingProduct) {
-            res.status(404).json({ success: false, error: "Product not found" });
-            return;
-        }
+    const deletedProduct = await prisma.product.update({
+      where: { productId },
+      data: { isActive: false }
+    });
 
-        // Soft delete: just set isActive to false instead of actually deleting
-        const deletedProduct = await prisma.product.update({
-            where: {
-                productId: id as string
-            },
-            data: {
-                isActive: false
-            }
-        });
-
-        // We DO NOT delete images from Supabase during Soft Delete, 
-        // as past orders/transactions might still need to display the product image.
-
-        res.status(200).json({
-            success: true,
-            data: deletedProduct
-        });
-    } catch (error) {
-        next(error);
-    }
-}
+    res.status(200).json({
+      success: true,
+      data: formatProduct(deletedProduct)
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
 export const deleteProductImage = async (req: Request, res: Response, next: NextFunction) => {
-    const { id } = req.params;
-    const { imageUrl } = req.body;
+  const productId = req.params['id'] as string;
+  const imageId = req.params['imgId'] || req.params['imageId'] || req.body.imageUrl;
 
-    if (!id || !imageUrl) {
-        res.status(400).json({
-            success: false,
-            error: "Format required not fulfilled"
-        });
-        return;
+  if (!productId) {
+    res.status(400).json({
+      success: false,
+      error: "ID produk tidak valid"
+    });
+    return;
+  }
+
+  try {
+    const existingProduct = await prisma.product.findUnique({ where: { productId } });
+    if (!existingProduct) {
+      res.status(404).json({ success: false, error: "Produk tidak ditemukan" });
+      return;
     }
 
-    try {
-        const existingProduct = await prisma.product.findUnique({ where: { productId: id as string } });
-        if (!existingProduct) {
-            res.status(404).json({ success: false, error: "Product not found" });
-            return;
-        }
+    const targetUrl = imageId ? String(imageId) : '';
+    const updatedImageUrls = existingProduct.imageUrls.filter(url => url !== targetUrl && !url.includes(targetUrl));
 
-        if (!existingProduct.imageUrls.includes(imageUrl)) {
-            res.status(404).json({ success: false, error: "Image not found on product" });
-            return;
-        }
+    const updatedProduct = await prisma.product.update({
+      where: { productId },
+      data: { imageUrls: updatedImageUrls },
+      include: { variants: true }
+    });
 
-        if (existingProduct.imageUrls.length === 1) {
-            res.status(400).json({ success: false, error: "Cannot delete the last image of a product" });
-            return;
-        }
-
-        const updatedImageUrls = existingProduct.imageUrls.filter(url => url !== imageUrl);
-
-        const updatedProduct = await prisma.product.update({
-            where: { productId: id as string },
-            data: { imageUrls: updatedImageUrls },
-            include: { variants: true }
-        });
-
-        await deleteFilesFromSupabase([imageUrl], 'product');
-
-        res.status(200).json({
-            success: true,
-            data: updatedProduct
-        });
-    } catch (error) {
-        next(error);
+    if (targetUrl) {
+      await deleteFilesFromSupabase([targetUrl], 'product').catch(() => {});
     }
-}
+
+    res.status(200).json({
+      success: true,
+      data: formatProduct(updatedProduct)
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
 export const updateProductVariantStock = async (req: Request, res: Response, next: NextFunction) => {
-    const { id, variantId } = req.params;
-    const { stock } = req.body;
+  const productId = req.params['id'] as string;
+  const variantId = req.params['variantId'] as string;
+  const { stock } = req.body;
 
-    if (!id || !variantId || stock === undefined) {
-        res.status(400).json({
-            success: false,
-            error: "Format required not fulfilled"
-        });
-        
-        return;
-    }
+  if (!productId || !variantId || stock === undefined) {
+    res.status(400).json({
+      success: false,
+      error: "Format required not fulfilled"
+    });
+    return;
+  }
 
-    try {
-        const updatedProductVariant = await prisma.productVariant.update({
-            where: {
-                variantId: variantId as string,
-                productId: id as string
-            },
-            data: {
-                stock: parseInt(stock as string)
-            }
-        });
+  try {
+    const updatedProductVariant = await prisma.productVariant.update({
+      where: {
+        variantId,
+        productId
+      },
+      data: {
+        stock: parseInt(stock as string)
+      }
+    });
 
-        res.status(200).json({
-            success: true,
-            data: updatedProductVariant
-        });
-    } catch (error) {
-        next(error);
-    }
-}
+    res.status(200).json({
+      success: true,
+      data: updatedProductVariant
+    });
+  } catch (error) {
+    next(error);
+  }
+};
