@@ -3,51 +3,56 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import prisma from '../lib/prisma.js';
 import { AppError } from '../lib/AppError.js';
+import { uploadFileToSupabase } from '../lib/uploadSupabase.js';
 
-const tokenBlacklist = new Set<string>();
-
-export const isTokenBlacklisted = (token: string) => tokenBlacklist.has(token);
-
-const signToken = (userId: bigint, role: string) => {
-  const options: jwt.SignOptions = {
-    expiresIn: (process.env.JWT_EXPIRES_IN || '7d') as jwt.SignOptions['expiresIn'],
-  };
-  return jwt.sign({ userId: userId.toString(), role }, process.env.JWT_SECRET as string, options);
+const signToken = (userId: string, role: string) => {
+  return jwt.sign(
+    { userId, role },
+    process.env.JWT_SECRET as string,
+    { expiresIn: (process.env.JWT_EXPIRES_IN || '7d') as any }
+  );
 };
 
 export const register = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { name, email, phone, password, password_confirmation } = req.body;
+    const { fullName, email, password, passwordConfirmation, phone } = req.body;
 
-    if (!name || !email || !password) {
-      return next(new AppError('Please provide name, email, and password', 400));
+    if (!fullName || !email || !password || !passwordConfirmation || !phone) {
+      return next(new AppError('Full name, email, and password are required', 400));
     }
-
-    if (password !== password_confirmation) {
-      return next(new AppError('Passwords do not match', 400));
+    
+    if (password !== passwordConfirmation) {
+      return next(new AppError('Password and password confirmation do not match', 400));
     }
-
-    const existingUser = await prisma.user.findUnique({ where: { email } });
-    if (existingUser) {
-      return next(new AppError('Email is already in use', 400));
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 12);
-
-    const newUser = await prisma.user.create({
-      data: { name, email, phone, password: hashedPassword },
-      select: { id: true, name: true, email: true, phone: true, role: true },
+    
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
     });
 
-    const token = signToken(newUser.id, newUser.role);
+    if (existingUser) {
+      return next(new AppError('Email already in use', 400));
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    const newUser = await prisma.user.create({
+      data: {
+        fullName,
+        email,
+        passwordHash,
+        phone,
+      },
+    });
+
+    const token = signToken(newUser.userId, newUser.role);
 
     res.status(201).json({
+      success: true,
       token,
-      user: {
-        id: newUser.id.toString(),
-        name: newUser.name,
+      data: {
+        userId: newUser.userId,
+        fullName: newUser.fullName,
         email: newUser.email,
-        phone: newUser.phone,
         role: newUser.role,
       },
     });
@@ -66,47 +71,24 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
 
     const user = await prisma.user.findUnique({
       where: { email },
-      select: { id: true, name: true, email: true, phone: true, role: true, password: true, isActive: true },
     });
 
-    if (!user || !user.password || !(await bcrypt.compare(password, user.password))) {
+    if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
       return next(new AppError('Incorrect email or password', 401));
     }
 
-    if (!user.isActive) {
-      return next(new AppError('Your account has been deactivated', 403));
-    }
-
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { lastLoginAt: new Date() },
-    });
-
-    const token = signToken(user.id, user.role);
+    const token = signToken(user.userId, user.role);
 
     res.status(200).json({
+      success: true,
       token,
-      user: {
-        id: user.id.toString(),
-        name: user.name,
+      data: {
+        userId: user.userId,
+        fullName: user.fullName,
         email: user.email,
-        phone: user.phone,
         role: user.role,
       },
     });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const logout = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.split(' ')[1];
-      if (token) tokenBlacklist.add(token);
-    }
-    res.status(200).json({ message: 'Logged out successfully' });
   } catch (error) {
     next(error);
   }
@@ -114,23 +96,28 @@ export const logout = async (req: Request, res: Response, next: NextFunction) =>
 
 export const getMe = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    if (!req.user) return next(new AppError('Not authenticated', 401));
+    const userId = req.user!.id;
 
     const user = await prisma.user.findUnique({
-      where: { id: BigInt(req.user.id) },
-      select: { id: true, name: true, email: true, phone: true, role: true },
+      where: { userId },
+      select: {
+        userId: true,
+        fullName: true,
+        email: true,
+        phone: true,
+        role: true,
+        avatarUrl: true,
+        createdAt: true,
+      }
     });
 
-    if (!user) return next(new AppError('User no longer exists', 404));
+    if (!user) {
+      return next(new AppError('User not found', 404));
+    }
 
     res.status(200).json({
-      user: {
-        id: user.id.toString(),
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-      },
+      success: true,
+      data: user,
     });
   } catch (error) {
     next(error);
@@ -139,31 +126,45 @@ export const getMe = async (req: Request, res: Response, next: NextFunction) => 
 
 export const updateAccount = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    if (!req.user) return next(new AppError('Not authenticated', 401));
+    const userId = req.user!.id;
+    const { fullName, phone, password } = req.body;
+    
+    let avatarUrl = undefined;
 
-    const { name, email, phone } = req.body;
-
-    if (email) {
-      const existing = await prisma.user.findFirst({
-        where: { email, id: { not: BigInt(req.user.id) } },
-      });
-      if (existing) return next(new AppError('Email already in use by another account', 400));
+    if (req.file) {
+      try {
+        avatarUrl = await uploadFileToSupabase(req.file, 'account');
+      } catch (error) {
+        return next(error);
+      }
     }
 
-    const user = await prisma.user.update({
-      where: { id: BigInt(req.user.id) },
-      data: { name, email, phone },
-      select: { id: true, name: true, email: true, phone: true, role: true },
+    const updateData: any = {};
+    if (fullName) updateData.fullName = fullName;
+    if (phone !== undefined) updateData.phone = phone;
+    if (avatarUrl) updateData.avatarUrl = avatarUrl;
+    
+    if (password) {
+      updateData.passwordHash = await bcrypt.hash(password, 12);
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { userId },
+      data: updateData,
+      select: {
+        userId: true,
+        fullName: true,
+        email: true,
+        phone: true,
+        role: true,
+        avatarUrl: true,
+        createdAt: true,
+      }
     });
 
     res.status(200).json({
-      user: {
-        id: user.id.toString(),
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-      },
+      success: true,
+      data: updatedUser,
     });
   } catch (error) {
     next(error);

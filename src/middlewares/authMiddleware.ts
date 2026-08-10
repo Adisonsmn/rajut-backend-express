@@ -1,8 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AppError } from '../lib/AppError.js';
-import { isTokenBlacklisted } from '../controllers/authController.js';
-
 declare global {
   namespace Express {
     interface Request {
@@ -24,10 +22,6 @@ export const protect = (req: Request, _res: Response, next: NextFunction) => {
 
     if (!token) {
       throw new AppError('You are not logged in. Please log in to get access.', 401);
-    }
-
-    if (isTokenBlacklisted(token)) {
-      throw new AppError('Token has been invalidated. Please log in again.', 401);
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as { userId: string; role: string };
