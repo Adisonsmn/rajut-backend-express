@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import prisma from '../lib/prisma.js';
@@ -55,6 +56,7 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
 
     const newUser = await prisma.user.create({
       data: {
+        userId: crypto.randomUUID(),
         fullName: name,
         email,
         passwordHash,
